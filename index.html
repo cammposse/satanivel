@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SATA - Nivel de Agua</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #f8fafc; padding: 15px; }
+    .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 600px; margin: auto; }
+    .btn { background: #0284c7; color: white; border: none; padding: 14px 24px; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; margin: 10px; }
+    .status-badge { padding: 15px; border-radius: 12px; font-size: 18px; font-weight: bold; margin: 15px 0; background: #e2e8f0; color: #475569; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h1>SATA - Nivel de Agua</h1>
+    
+    <button id="btnConnect" class="btn" onclick="conectarBluetooth()">Conectar Bluetooth</button>
+    <button id="btnExport" class="btn" onclick="descargarCSV()" disabled style="background:#cbd5e1;">Exportar CSV</button>
+
+    <div class="status-badge" id="lblEstado">Estado: Desconectado</div>
+
+    <canvas id="graficoNivel"></canvas>
+  </div>
+
+  <script>
+    const BLE_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
+    const BLE_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
+
+    let bluetoothDevice;
+    let bluetoothCharacteristic;
+    let bufferTexto = "";
+    let historialDatos = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
+
+    const ctx = document.getElementById('graficoNivel').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Nivel (%)',
+          data: [],
+          borderColor: '#0284c7',
+          backgroundColor: 'rgba(2, 132, 199, 0.2)',
+          fill: true,
+          tension: 0.2
+        }]
+      },
+      options: { scales: { y: { min: 0, max: 100, ticks: { stepSize: 25 } } } }
+    });
+
+    async function conectarBluetooth() {
+      // 1. Verificación de soporte Web Bluetooth
+      if (!navigator.bluetooth) {
+        alert("ERROR: Este navegador no soporta Web Bluetooth. Asegurate de estar usando la app 'Bluefy' en el iPhone.");
+        lblEstado.innerText = "Navegador no compatible (Usar Bluefy)";
+        return;
+      }
+
+      try {
+        lblEstado.innerText = "Buscando dispositivos...";
+        
+        // Solicita cualquier dispositivo Bluetooth cercano
+        bluetoothDevice = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [BLE_SERVICE_UUID]
+        });
+
+        lblEstado.innerText = "Conectando a " + bluetoothDevice.name + "...";
+
+        const server = await bluetoothDevice.gatt.connect();
+        const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+        bluetoothCharacteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
+
+        await bluetoothCharacteristic.startNotifications();
+        bluetoothCharacteristic.addEventListener('characteristicvaluechanged', recibirDatos);
+
+        lblEstado.innerText = "¡Conectado exitosamente!";
+        lblEstado.style.backgroundColor = "#e0f2fe";
+        lblEstado.style.color = "#0369a1";
+        document.getElementById('btnConnect').style.background = "#22c55e";
+        document.getElementById('btnConnect').innerText = "¡Conectado!";
+        document.getElementById('btnExport').disabled = false;
+        document.getElementById('btnExport').style.background = "#0284c7";
+
+      } catch (error) {
+        alert("Detalle del error: " + error.message);
+        lblEstado.innerText = "Error: " + error.message;
+      }
+    }
+
+    function recibirDatos(event) {
+      let decoder = new TextDecoder('utf-8');
+      bufferTexto += decoder.decode(event.target.value);
+
+      if (bufferTexto.includes('\n')) {
+        let lineas = bufferTexto.split('\n');
+        bufferTexto = lineas.pop();
+
+        for (let linea of lineas) {
+          linea = linea.trim();
+          if (linea.startsWith("SATA|")) {
+            procesarTramaSATA(linea);
+          }
+        }
+      }
+    }
+
+    function procesarTramaSATA(trama) {
+      let partes = trama.split('|');
+      let nivelNum = parseInt(partes[1]);
+      let colorTexto = partes[2] || "SIN NIVEL";
+      let horaActual = new Date().toLocaleTimeString();
+
+      let porcentaje = 0;
+      let colorFondo = "#e2e8f0";
+      let colorTextoStyle = "#475569";
+
+      switch (nivelNum) {
+        case 0: porcentaje = 0; colorFondo = "#cbd5e1"; colorTextoStyle = "#334155"; break;
+        case 1: porcentaje = 25; colorFondo = "#93c5fd"; colorTextoStyle = "#1e3a8a"; break;
+        case 2: porcentaje = 50; colorFondo = "#86efac"; colorTextoStyle = "#14532d"; break;
+        case 3: porcentaje = 75; colorFondo = "#fde047"; colorTextoStyle = "#713f12"; break;
+        case 4: porcentaje = 100; colorFondo = "#fca5a5"; colorTextoStyle = "#7f1d1d"; break;
+      }
+
+      lblEstado.innerText = `NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
+      lblEstado.style.backgroundColor = colorFondo;
+      lblEstado.style.color = colorTextoStyle;
+
+      chart.data.labels.push(horaActual);
+      chart.data.datasets[0].data.push(porcentaje);
+      if (chart.data.labels.length > 15) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update();
+
+      historialDatos.push([horaActual, nivelNum, colorTexto, `${porcentaje}%`]);
+    }
+
+    function descargarCSV() {
+      let csvContent = "data:text/csv;charset=utf-8," 
+        + historialDatos.map(e => e.join(",")).join("\n");
+
+      let encodedUri = encodeURI(csvContent);
+      let link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "registro_sata_nivel.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
+  </script>
+</body>
+</html>
