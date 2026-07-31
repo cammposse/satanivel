@@ -8,7 +8,7 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- Firebase JavaScript SDKs (Compatibilidad a prueba de fallas) -->
+  <!-- Firebase JavaScript SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
@@ -44,6 +44,7 @@
   <div id="modalCSV" class="modal">
     <div class="modal-content">
       <h3 style="margin-top:0;">Registro de Datos (CSV)</h3>
+      <p style="margin-bottom:10px;">Copiá estos datos para pegarlos en Excel o Google Sheets:</p>
       <textarea id="txtCSV" readonly></textarea>
       <button class="btn btn-green" onclick="copiarCSV()">Copiar al Portapapeles</button>
       <button class="btn" style="background:#64748b;" onclick="cerrarModalCSV()">Cerrar</button>
@@ -51,7 +52,7 @@
   </div>
 
   <script>
-    // 1. INICIALIZAR FIREBASE (Tu URL configurada)
+    // 1. INICIALIZAR FIREBASE
     const firebaseConfig = {
       databaseURL: "https://sata-nivel-default-rtdb.firebaseio.com"
     };
@@ -87,7 +88,7 @@
       options: { scales: { y: { min: 0, max: 100, ticks: { stepSize: 25 } } } }
     });
 
-    // 2. CONEXIÓN BLUETOOTH (Teléfono A / Gateway)
+    // 2. CONEXIÓN BLUETOOTH (Solo Teléfono Gateway)
     async function conectarBluetooth() {
       try {
         document.getElementById('lblEstado').innerText = "Buscando dispositivos...";
@@ -106,7 +107,6 @@
         document.getElementById('lblEstado').innerText = "¡Conectado por Bluetooth (Modo Gateway)!";
         document.getElementById('btnConnect').style.background = "#22c55e";
         document.getElementById('btnConnect').innerText = "Bluetooth Activo";
-        document.getElementById('btnExport').disabled = false;
 
       } catch (error) {
         alert("Error Bluetooth: " + error.message);
@@ -125,7 +125,6 @@
         for (let linea of lineas) {
           linea = linea.trim();
           if (linea.startsWith("SATA|")) {
-            // SUBIR A FIREBASE
             estadoRef.set({
               trama: linea,
               timestamp: Date.now()
@@ -140,6 +139,8 @@
       const data = snapshot.val();
       if (data && data.trama) {
         procesarTramaSATA(data.trama);
+        // Habilitar botón de exportar CSV para todos los usuarios remotos
+        document.getElementById('btnExport').disabled = false;
       } else {
         document.getElementById('lblEstado').innerText = "Estado: Esperando datos de la nube...";
       }
@@ -180,6 +181,7 @@
       }
       chart.update();
 
+      // Guardar en el historial
       historialDatos.push([horaActual, nivelNum, colorTexto, `${porcentaje}%`]);
     }
 
@@ -197,8 +199,9 @@
     function copiarCSV() {
       let txt = document.getElementById('txtCSV');
       txt.select();
+      txt.setSelectionRange(0, 99999); // Para selección en celulares
       navigator.clipboard.writeText(txt.value);
-      alert("¡Datos copiados!");
+      alert("¡Datos copiados al portapapeles! Podés pegarlos en un mensaje, Notas o Excel.");
     }
   </script>
 </body>
