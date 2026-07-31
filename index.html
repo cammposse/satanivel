@@ -4,165 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SATA - Sistema de Alerta Temprana</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   
-  <!-- Importamos Firebase (Versión 9 Modular) -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
-    import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    // ==========================================
-    // ¡CONFIGURÁ TU URL DE FIREBASE ACÁ!
-    // ==========================================
-    const firebaseConfig = {
-      databaseURL: "https://sata-nivel-default-rtdb.firebaseio.com/" 
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
-
-    // Variables globales
-    const BLE_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
-    const BLE_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
-
-    let bluetoothDevice;
-    let bluetoothCharacteristic;
-    let bufferTexto = "";
-    let historialDatos = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
-
-    // Configuración del Gráfico
-    const ctx = document.getElementById('graficoNivel').getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [{
-          label: 'Nivel (%)',
-          data: [],
-          borderColor: '#0284c7',
-          backgroundColor: 'rgba(2, 132, 199, 0.2)',
-          fill: true,
-          tension: 0.2
-        }]
-      },
-      options: { scales: { y: { min: 0, max: 100, ticks: { stepSize: 25 } } } }
-    });
-
-    // 1. CONEXIÓN BLUETOOTH (Solo la hace el Teléfono A o la PC principal)
-    window.conectarBluetooth = async function() {
-      try {
-        document.getElementById('lblEstado').innerText = "Buscando dispositivos...";
-        bluetoothDevice = await navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
-          optionalServices: [BLE_SERVICE_UUID]
-        });
-
-        const server = await bluetoothDevice.gatt.connect();
-        const service = await server.getPrimaryService(BLE_SERVICE_UUID);
-        bluetoothCharacteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
-
-        await bluetoothCharacteristic.startNotifications();
-        bluetoothCharacteristic.addEventListener('characteristicvaluechanged', recibirDatosBluetooth);
-
-        document.getElementById('lblEstado').innerText = "¡Conectado por Bluetooth (Modo Gateway)!";
-        document.getElementById('btnConnect').style.background = "#22c55e";
-        document.getElementById('btnConnect').innerText = "Bluetooth Activo";
-        document.getElementById('btnExport').disabled = false;
-
-      } catch (error) {
-        alert("Error Bluetooth: " + error.message);
-      }
-    };
-
-    // 2. RECIBIR DATOS DEL ARDUINO Y SUBIRLOS A LA NUBE
-    function recibirDatosBluetooth(event) {
-      let decoder = new TextDecoder('utf-8');
-      bufferTexto += decoder.decode(event.target.value);
-
-      if (bufferTexto.includes('\n')) {
-        let lineas = bufferTexto.split('\n');
-        bufferTexto = lineas.pop();
-
-        for (let linea of lineas) {
-          linea = linea.trim();
-          if (linea.startsWith("SATA|")) {
-            // ENVIAR A FIREBASE PARA QUE TODOS LOS DEMÁS TELEFONOS LO VEAN
-            const estadoRef = ref(db, 'sistema/actual');
-            set(estadoRef, {
-              trama: linea,
-              timestamp: Date.now()
-            });
-          }
-        }
-      }
-    }
-
-    // 3. ESCUCHAR A FIREBASE EN TIEMPO REAL (Lo usan TODOS los teléfonos, incluido el A)
-    const estadoRef = ref(db, 'sistema/actual');
-    onValue(estadoRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data && data.trama) {
-        procesarTramaSATA(data.trama);
-      }
-    });
-
-    // 4. PROCESAR Y ACTUALIZAR INTERFAZ / GRÁFICO
-    function procesarTramaSATA(trama) {
-      let partes = trama.split('|');
-      let nivelNum = parseInt(partes[1]);
-      let colorTexto = partes[2] || "SIN NIVEL";
-      let horaActual = new Date().toLocaleTimeString();
-
-      let porcentaje = 0;
-      let colorFondo = "#e2e8f0";
-
-      switch (nivelNum) {
-        case 0: porcentaje = 0; colorFondo = "#cbd5e1"; break;
-        case 1: porcentaje = 25; colorFondo = "#93c5fd"; break;
-        case 2: porcentaje = 50; colorFondo = "#86efac"; break;
-        case 3: porcentaje = 75; colorFondo = "#fde047"; break;
-        case 4: porcentaje = 100; colorFondo = "#fca5a5"; break;
-      }
-
-      const lbl = document.getElementById('lblEstado');
-      // Si este teléfono no está conectado al bluetooth, le avisamos que está en modo espectador cloud
-      if (!bluetoothDevice) {
-        lbl.innerText = `[MODO NUBE] NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
-      } else {
-        lbl.innerText = `NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
-      }
-      lbl.style.backgroundColor = colorFondo;
-
-      // Actualizar Gráfico
-      chart.data.labels.push(horaActual);
-      chart.data.datasets[0].data.push(porcentaje);
-      if (chart.data.labels.length > 15) {
-        chart.data.labels.shift();
-        chart.data.datasets[0].data.shift();
-      }
-      chart.update();
-
-      historialDatos.push([horaActual, nivelNum, colorTexto, `${porcentaje}%`]);
-    }
-
-    // Función Exportar CSV
-    window.abrirModalCSV = function() {
-      let contenido = historialDatos.map(e => e.join(",")).join("\n");
-      document.getElementById('txtCSV').value = contenido;
-      document.getElementById('modalCSV').style.display = 'block';
-    };
-
-    window.cerrarModalCSV = function() {
-      document.getElementById('modalCSV').style.display = 'none';
-    };
-
-    window.copiarCSV = function() {
-      let txt = document.getElementById('txtCSV');
-      txt.select();
-      navigator.clipboard.writeText(txt.value);
-      alert("¡Datos copiados!");
-    };
-  </script>
+  <!-- Firebase JavaScript SDKs (Compatibilidad a prueba de fallas) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
   <style>
     body { font-family: 'Segoe UI', sans-serif; text-align: center; background: #f8fafc; padding: 15px; margin: 0; }
@@ -188,7 +36,7 @@
     <button id="btnConnect" class="btn" onclick="conectarBluetooth()">Conectar Bluetooth (Gateway)</button>
     <button id="btnExport" class="btn" onclick="abrirModalCSV()" disabled>Exportar CSV</button>
 
-    <div class="status-badge" id="lblEstado">Estado: Esperando datos de la nube...</div>
+    <div class="status-badge" id="lblEstado">Estado: Conectando a la nube...</div>
 
     <canvas id="graficoNivel"></canvas>
   </div>
@@ -202,5 +50,156 @@
     </div>
   </div>
 
+  <script>
+    // 1. INICIALIZAR FIREBASE (Tu URL configurada)
+    const firebaseConfig = {
+      databaseURL: "https://sata-nivel-default-rtdb.firebaseio.com"
+    };
+    
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+    const estadoRef = database.ref('sistema/actual');
+
+    // Variables Bluetooth & App
+    const BLE_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
+    const BLE_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
+
+    let bluetoothDevice;
+    let bluetoothCharacteristic;
+    let bufferTexto = "";
+    let historialDatos = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
+
+    // Inicializar Gráfico Chart.js
+    const ctx = document.getElementById('graficoNivel').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Nivel (%)',
+          data: [],
+          borderColor: '#0284c7',
+          backgroundColor: 'rgba(2, 132, 199, 0.2)',
+          fill: true,
+          tension: 0.2
+        }]
+      },
+      options: { scales: { y: { min: 0, max: 100, ticks: { stepSize: 25 } } } }
+    });
+
+    // 2. CONEXIÓN BLUETOOTH (Teléfono A / Gateway)
+    async function conectarBluetooth() {
+      try {
+        document.getElementById('lblEstado').innerText = "Buscando dispositivos...";
+        bluetoothDevice = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [BLE_SERVICE_UUID]
+        });
+
+        const server = await bluetoothDevice.gatt.connect();
+        const service = await server.getPrimaryService(BLE_SERVICE_UUID);
+        bluetoothCharacteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
+
+        await bluetoothCharacteristic.startNotifications();
+        bluetoothCharacteristic.addEventListener('characteristicvaluechanged', recibirDatosBluetooth);
+
+        document.getElementById('lblEstado').innerText = "¡Conectado por Bluetooth (Modo Gateway)!";
+        document.getElementById('btnConnect').style.background = "#22c55e";
+        document.getElementById('btnConnect').innerText = "Bluetooth Activo";
+        document.getElementById('btnExport').disabled = false;
+
+      } catch (error) {
+        alert("Error Bluetooth: " + error.message);
+      }
+    }
+
+    // 3. RECIBIR DATOS DEL ARDUINO Y SUBIRLOS A FIREBASE
+    function recibirDatosBluetooth(event) {
+      let decoder = new TextDecoder('utf-8');
+      bufferTexto += decoder.decode(event.target.value);
+
+      if (bufferTexto.includes('\n')) {
+        let lineas = bufferTexto.split('\n');
+        bufferTexto = lineas.pop();
+
+        for (let linea of lineas) {
+          linea = linea.trim();
+          if (linea.startsWith("SATA|")) {
+            // SUBIR A FIREBASE
+            estadoRef.set({
+              trama: linea,
+              timestamp: Date.now()
+            });
+          }
+        }
+      }
+    }
+
+    // 4. ESCUCHAR A FIREBASE EN TIEMPO REAL (Para TODOS los teléfonos)
+    estadoRef.on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.trama) {
+        procesarTramaSATA(data.trama);
+      } else {
+        document.getElementById('lblEstado').innerText = "Estado: Esperando datos de la nube...";
+      }
+    });
+
+    // 5. PROCESAR Y MOSTRAR EN PANTALLA
+    function procesarTramaSATA(trama) {
+      let partes = trama.split('|');
+      let nivelNum = parseInt(partes[1]);
+      let colorTexto = partes[2] || "SIN NIVEL";
+      let horaActual = new Date().toLocaleTimeString();
+
+      let porcentaje = 0;
+      let colorFondo = "#e2e8f0";
+
+      switch (nivelNum) {
+        case 0: porcentaje = 0; colorFondo = "#cbd5e1"; break;
+        case 1: porcentaje = 25; colorFondo = "#93c5fd"; break;
+        case 2: porcentaje = 50; colorFondo = "#86efac"; break;
+        case 3: porcentaje = 75; colorFondo = "#fde047"; break;
+        case 4: porcentaje = 100; colorFondo = "#fca5a5"; break;
+      }
+
+      const lbl = document.getElementById('lblEstado');
+      if (!bluetoothDevice) {
+        lbl.innerText = `[NUBE] NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
+      } else {
+        lbl.innerText = `[GATEWAY] NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
+      }
+      lbl.style.backgroundColor = colorFondo;
+
+      // Actualizar Gráfico
+      chart.data.labels.push(horaActual);
+      chart.data.datasets[0].data.push(porcentaje);
+      if (chart.data.labels.length > 15) {
+        chart.data.labels.shift();
+        chart.data.datasets[0].data.shift();
+      }
+      chart.update();
+
+      historialDatos.push([horaActual, nivelNum, colorTexto, `${porcentaje}%`]);
+    }
+
+    // Funciones Modal CSV
+    function abrirModalCSV() {
+      let contenido = historialDatos.map(e => e.join(",")).join("\n");
+      document.getElementById('txtCSV').value = contenido;
+      document.getElementById('modalCSV').style.display = 'block';
+    }
+
+    function cerrarModalCSV() {
+      document.getElementById('modalCSV').style.display = 'none';
+    }
+
+    function copiarCSV() {
+      let txt = document.getElementById('txtCSV');
+      txt.select();
+      navigator.clipboard.writeText(txt.value);
+      alert("¡Datos copiados!");
+    }
+  </script>
 </body>
 </html>
