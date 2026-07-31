@@ -8,7 +8,7 @@
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- Firebase JavaScript SDKs -->
+  <!-- Firebase SDKs Compat -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
@@ -34,7 +34,7 @@
     <p>Sistema Multi-usuario IoT (Bluetooth + Cloud)</p>
     
     <button id="btnConnect" class="btn" onclick="conectarBluetooth()">Conectar Bluetooth (Gateway)</button>
-    <button id="btnExport" class="btn" onclick="abrirModalCSV()" disabled>Exportar CSV</button>
+    <button id="btnExport" class="btn" onclick="abrirModalCSV()">Exportar CSV</button>
 
     <div class="status-badge" id="lblEstado">Estado: Conectando a la nube...</div>
 
@@ -60,17 +60,18 @@
     firebase.initializeApp(firebaseConfig);
     const database = firebase.database();
     const estadoRef = database.ref('sistema/actual');
+    const historialRef = database.ref('sistema/historial');
 
-    // Variables Bluetooth & App
+    // Variables de trabajo
     const BLE_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
     const BLE_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
     let bluetoothDevice;
     let bluetoothCharacteristic;
     let bufferTexto = "";
-    let historialDatos = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
+    let listaRegistros = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
 
-    // Inicializar Gráfico Chart.js
+    // Chart.js
     const ctx = document.getElementById('graficoNivel').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -88,7 +89,7 @@
       options: { scales: { y: { min: 0, max: 100, ticks: { stepSize: 25 } } } }
     });
 
-    // 2. CONEXIÓN BLUETOOTH (Solo Teléfono Gateway)
+    // 2. CONEXIÓN BLUETOOTH (Solo Gateway)
     async function conectarBluetooth() {
       try {
         document.getElementById('lblEstado').innerText = "Buscando dispositivos...";
@@ -113,7 +114,7 @@
       }
     }
 
-    // 3. RECIBIR DATOS DEL ARDUINO Y SUBIRLOS A FIREBASE
+    // 3. RECIBIR BLUETOOTH Y SUBIR ESTADO + HISTORIAL A FIREBASE
     function recibirDatosBluetooth(event) {
       let decoder = new TextDecoder('utf-8');
       bufferTexto += decoder.decode(event.target.value);
@@ -125,70 +126,83 @@
         for (let linea of lineas) {
           linea = linea.trim();
           if (linea.startsWith("SATA|")) {
-            estadoRef.set({
-              trama: linea,
-              timestamp: Date.now()
+            let hora = new Date().toLocaleTimeString();
+            let partes = linea.split('|');
+            let nivel = parseInt(partes[1]);
+            let nombre = partes[2] || "SIN NIVEL";
+            let pct = (nivel * 25) + "%";
+
+            // Guardar estado actual
+            estadoRef.set({ trama: linea, timestamp: Date.now() });
+
+            // Agregar evento al historial en Firebase
+            historialRef.push({
+              hora: hora,
+              nivel: nivel,
+              nombre: nombre,
+              porcentaje: pct
             });
           }
         }
       }
     }
 
-    // 4. ESCUCHAR A FIREBASE EN TIEMPO REAL (Para TODOS los teléfonos)
+    // 4. ESCUCHAR ESTADO ACTUAL DESDE FIREBASE
     estadoRef.on('value', (snapshot) => {
       const data = snapshot.val();
       if (data && data.trama) {
-        procesarTramaSATA(data.trama);
-        // Habilitar botón de exportar CSV para todos los usuarios remotos
-        document.getElementById('btnExport').disabled = false;
+        procesarEstadoVisual(data.trama);
       } else {
         document.getElementById('lblEstado').innerText = "Estado: Esperando datos de la nube...";
       }
     });
 
-    // 5. PROCESAR Y MOSTRAR EN PANTALLA
-    function procesarTramaSATA(trama) {
+    // 5. ESCUCHAR HISTORIAL COMPLETO DESDE FIREBASE (Para clientes remotos)
+    historialRef.on('value', (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        listaRegistros = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
+        chart.data.labels = [];
+        chart.data.datasets[0].data = [];
+
+        Object.values(data).forEach(item => {
+          listaRegistros.push([item.hora, item.nivel, item.nombre, item.porcentaje]);
+          
+          chart.data.labels.push(item.hora);
+          chart.data.datasets[0].data.push(parseInt(item.porcentaje));
+          if (chart.data.labels.length > 15) {
+            chart.data.labels.shift();
+            chart.data.datasets[0].data.shift();
+          }
+        });
+        chart.update();
+      }
+    });
+
+    function procesarEstadoVisual(trama) {
       let partes = trama.split('|');
       let nivelNum = parseInt(partes[1]);
       let colorTexto = partes[2] || "SIN NIVEL";
-      let horaActual = new Date().toLocaleTimeString();
+      let porcentaje = nivelNum * 25;
 
-      let porcentaje = 0;
       let colorFondo = "#e2e8f0";
-
       switch (nivelNum) {
-        case 0: porcentaje = 0; colorFondo = "#cbd5e1"; break;
-        case 1: porcentaje = 25; colorFondo = "#93c5fd"; break;
-        case 2: porcentaje = 50; colorFondo = "#86efac"; break;
-        case 3: porcentaje = 75; colorFondo = "#fde047"; break;
-        case 4: porcentaje = 100; colorFondo = "#fca5a5"; break;
+        case 0: colorFondo = "#cbd5e1"; break;
+        case 1: colorFondo = "#93c5fd"; break;
+        case 2: colorFondo = "#86efac"; break;
+        case 3: colorFondo = "#fde047"; break;
+        case 4: colorFondo = "#fca5a5"; break;
       }
 
       const lbl = document.getElementById('lblEstado');
-      if (!bluetoothDevice) {
-        lbl.innerText = `[NUBE] NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
-      } else {
-        lbl.innerText = `[GATEWAY] NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
-      }
+      lbl.innerText = (bluetoothDevice ? "[GATEWAY]" : "[REMOTO]") + ` NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
       lbl.style.backgroundColor = colorFondo;
-
-      // Actualizar Gráfico
-      chart.data.labels.push(horaActual);
-      chart.data.datasets[0].data.push(porcentaje);
-      if (chart.data.labels.length > 15) {
-        chart.data.labels.shift();
-        chart.data.datasets[0].data.shift();
-      }
-      chart.update();
-
-      // Guardar en el historial
-      historialDatos.push([horaActual, nivelNum, colorTexto, `${porcentaje}%`]);
     }
 
-    // Funciones Modal CSV
+    // MODAL Y COPIA DE CSV
     function abrirModalCSV() {
-      let contenido = historialDatos.map(e => e.join(",")).join("\n");
-      document.getElementById('txtCSV').value = contenido;
+      let textoCSV = listaRegistros.map(fila => fila.join(",")).join("\n");
+      document.getElementById('txtCSV').value = textoCSV;
       document.getElementById('modalCSV').style.display = 'block';
     }
 
@@ -199,9 +213,19 @@
     function copiarCSV() {
       let txt = document.getElementById('txtCSV');
       txt.select();
-      txt.setSelectionRange(0, 99999); // Para selección en celulares
-      navigator.clipboard.writeText(txt.value);
-      alert("¡Datos copiados al portapapeles! Podés pegarlos en un mensaje, Notas o Excel.");
+      txt.setSelectionRange(0, 99999);
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt.value).then(() => {
+          alert("¡Datos copiados al portapapeles!");
+        }).catch(() => {
+          document.execCommand('copy');
+          alert("¡Datos copiados!");
+        });
+      } else {
+        document.execCommand('copy');
+        alert("¡Datos copiados!");
+      }
     }
   </script>
 </body>
