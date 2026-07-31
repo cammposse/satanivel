@@ -3,54 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SATA - Nivel de Agua</title>
+  <title>SATA - Sistema de Alerta Temprana</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <style>
-    body { font-family: 'Segoe UI', sans-serif; text-align: center; background: #f8fafc; padding: 15px; margin: 0; }
-    .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 600px; margin: auto; }
-    h1 { color: #1e293b; font-size: 20pt; margin-bottom: 5px; }
-    p { color: #64748b; font-size: 10pt; margin-top: 0; }
-    
-    .btn { background: #0284c7; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; margin: 5px; }
-    .btn:disabled { background: #cbd5e1; cursor: not-allowed; }
-    .btn-green { background: #22c55e; }
-    
-    .status-badge { padding: 15px; border-radius: 12px; font-size: 18px; font-weight: bold; margin: 15px 0; background: #e2e8f0; color: #475569; }
-    canvas { max-width: 100%; margin-top: 15px; }
+  
+  <!-- Importamos Firebase (Versión 9 Modular) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+    import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
 
-    /* Modal / Ventana flotante para iOS */
-    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; }
-    .modal-content { background: white; margin: 10% auto; padding: 20px; border-radius: 12px; max-width: 90%; max-height: 80%; overflow-y: auto; text-align: left; }
-    textarea { width: 100%; height: 180px; font-family: monospace; font-size: 12px; margin: 10px 0; }
-  </style>
-</head>
-<body>
+    // ==========================================
+    // ¡CONFIGURÁ TU URL DE FIREBASE ACÁ!
+    // ==========================================
+    const firebaseConfig = {
+      databaseURL: "https://sata-nivel-default-rtdb.firebaseio.com/" 
+    };
 
-  <div class="card">
-    <h1>SATA - Nivel de Agua</h1>
-    <p>Sistema de Alerta Temprana con Arduino & HM-10</p>
-    
-    <button id="btnConnect" class="btn" onclick="conectarBluetooth()">Conectar Bluetooth</button>
-    <button id="btnExport" class="btn" onclick="abrirModalCSV()" disabled>Exportar CSV</button>
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
 
-    <div class="status-badge" id="lblEstado">Estado: Desconectado</div>
-
-    <canvas id="graficoNivel"></canvas>
-  </div>
-
-  <!-- Modal para exportar datos en iPhone -->
-  <div id="modalCSV" class="modal">
-    <div class="modal-content">
-      <h3 style="margin-top:0;">Registro de Datos (CSV)</h3>
-      <p>Copiá este texto para pegarlo en Excel / Google Sheets:</p>
-      <textarea id="txtCSV" readonly></textarea>
-      <button class="btn btn-green" onclick="copiarCSV()">Copiar al Portapapeles</button>
-      <button class="btn" onclick="descargarDirecto()">Descargar Archivo</button>
-      <button class="btn" style="background:#64748b;" onclick="cerrarModalCSV()">Cerrar</button>
-    </div>
-  </div>
-
-  <script>
+    // Variables globales
     const BLE_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
     const BLE_CHARACTERISTIC_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
 
@@ -59,6 +30,7 @@
     let bufferTexto = "";
     let historialDatos = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
 
+    // Configuración del Gráfico
     const ctx = document.getElementById('graficoNivel').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -76,9 +48,10 @@
       options: { scales: { y: { min: 0, max: 100, ticks: { stepSize: 25 } } } }
     });
 
-    async function conectarBluetooth() {
+    // 1. CONEXIÓN BLUETOOTH (Solo la hace el Teléfono A o la PC principal)
+    window.conectarBluetooth = async function() {
       try {
-        lblEstado.innerText = "Buscando dispositivos...";
+        document.getElementById('lblEstado').innerText = "Buscando dispositivos...";
         bluetoothDevice = await navigator.bluetooth.requestDevice({
           acceptAllDevices: true,
           optionalServices: [BLE_SERVICE_UUID]
@@ -89,21 +62,20 @@
         bluetoothCharacteristic = await service.getCharacteristic(BLE_CHARACTERISTIC_UUID);
 
         await bluetoothCharacteristic.startNotifications();
-        bluetoothCharacteristic.addEventListener('characteristicvaluechanged', recibirDatos);
+        bluetoothCharacteristic.addEventListener('characteristicvaluechanged', recibirDatosBluetooth);
 
-        lblEstado.innerText = "¡Conectado exitosamente!";
-        lblEstado.style.backgroundColor = "#e0f2fe";
-        lblEstado.style.color = "#0369a1";
+        document.getElementById('lblEstado').innerText = "¡Conectado por Bluetooth (Modo Gateway)!";
         document.getElementById('btnConnect').style.background = "#22c55e";
-        document.getElementById('btnConnect').innerText = "¡Conectado!";
+        document.getElementById('btnConnect').innerText = "Bluetooth Activo";
         document.getElementById('btnExport').disabled = false;
 
       } catch (error) {
-        lblEstado.innerText = "Error: " + error.message;
+        alert("Error Bluetooth: " + error.message);
       }
-    }
+    };
 
-    function recibirDatos(event) {
+    // 2. RECIBIR DATOS DEL ARDUINO Y SUBIRLOS A LA NUBE
+    function recibirDatosBluetooth(event) {
       let decoder = new TextDecoder('utf-8');
       bufferTexto += decoder.decode(event.target.value);
 
@@ -114,12 +86,27 @@
         for (let linea of lineas) {
           linea = linea.trim();
           if (linea.startsWith("SATA|")) {
-            procesarTramaSATA(linea);
+            // ENVIAR A FIREBASE PARA QUE TODOS LOS DEMÁS TELEFONOS LO VEAN
+            const estadoRef = ref(db, 'sistema/actual');
+            set(estadoRef, {
+              trama: linea,
+              timestamp: Date.now()
+            });
           }
         }
       }
     }
 
+    // 3. ESCUCHAR A FIREBASE EN TIEMPO REAL (Lo usan TODOS los teléfonos, incluido el A)
+    const estadoRef = ref(db, 'sistema/actual');
+    onValue(estadoRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data && data.trama) {
+        procesarTramaSATA(data.trama);
+      }
+    });
+
+    // 4. PROCESAR Y ACTUALIZAR INTERFAZ / GRÁFICO
     function procesarTramaSATA(trama) {
       let partes = trama.split('|');
       let nivelNum = parseInt(partes[1]);
@@ -128,20 +115,25 @@
 
       let porcentaje = 0;
       let colorFondo = "#e2e8f0";
-      let colorTextoStyle = "#475569";
 
       switch (nivelNum) {
-        case 0: porcentaje = 0; colorFondo = "#cbd5e1"; colorTextoStyle = "#334155"; break;
-        case 1: porcentaje = 25; colorFondo = "#93c5fd"; colorTextoStyle = "#1e3a8a"; break;
-        case 2: porcentaje = 50; colorFondo = "#86efac"; colorTextoStyle = "#14532d"; break;
-        case 3: porcentaje = 75; colorFondo = "#fde047"; colorTextoStyle = "#713f12"; break;
-        case 4: porcentaje = 100; colorFondo = "#fca5a5"; colorTextoStyle = "#7f1d1d"; break;
+        case 0: porcentaje = 0; colorFondo = "#cbd5e1"; break;
+        case 1: porcentaje = 25; colorFondo = "#93c5fd"; break;
+        case 2: porcentaje = 50; colorFondo = "#86efac"; break;
+        case 3: porcentaje = 75; colorFondo = "#fde047"; break;
+        case 4: porcentaje = 100; colorFondo = "#fca5a5"; break;
       }
 
-      lblEstado.innerText = `NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
-      lblEstado.style.backgroundColor = colorFondo;
-      lblEstado.style.color = colorTextoStyle;
+      const lbl = document.getElementById('lblEstado');
+      // Si este teléfono no está conectado al bluetooth, le avisamos que está en modo espectador cloud
+      if (!bluetoothDevice) {
+        lbl.innerText = `[MODO NUBE] NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
+      } else {
+        lbl.innerText = `NIVEL ${nivelNum}: ${colorTexto} (${porcentaje}%)`;
+      }
+      lbl.style.backgroundColor = colorFondo;
 
+      // Actualizar Gráfico
       chart.data.labels.push(horaActual);
       chart.data.datasets[0].data.push(porcentaje);
       if (chart.data.labels.length > 15) {
@@ -153,34 +145,62 @@
       historialDatos.push([horaActual, nivelNum, colorTexto, `${porcentaje}%`]);
     }
 
-    // Funciones del Modal para iPhone
-    function abrirModalCSV() {
+    // Función Exportar CSV
+    window.abrirModalCSV = function() {
       let contenido = historialDatos.map(e => e.join(",")).join("\n");
       document.getElementById('txtCSV').value = contenido;
       document.getElementById('modalCSV').style.display = 'block';
-    }
+    };
 
-    function cerrarModalCSV() {
+    window.cerrarModalCSV = function() {
       document.getElementById('modalCSV').style.display = 'none';
-    }
+    };
 
-    function copiarCSV() {
+    window.copiarCSV = function() {
       let txt = document.getElementById('txtCSV');
       txt.select();
-      txt.setSelectionRange(0, 99999);
       navigator.clipboard.writeText(txt.value);
-      alert("¡Datos copiados al portapapeles! Podés pegarlos en un mail, notas o Excel.");
-    }
-
-    function descargarDirecto() {
-      let csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(document.getElementById('txtCSV').value);
-      let link = document.createElement("a");
-      link.setAttribute("href", csvContent);
-      link.setAttribute("download", "registro_sata_nivel.csv");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    }
+      alert("¡Datos copiados!");
+    };
   </script>
+
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; text-align: center; background: #f8fafc; padding: 15px; margin: 0; }
+    .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); max-width: 600px; margin: auto; }
+    h1 { color: #1e293b; font-size: 20pt; margin-bottom: 5px; }
+    p { color: #64748b; font-size: 10pt; margin-top: 0; }
+    .btn { background: #0284c7; color: white; border: none; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; margin: 5px; }
+    .btn:disabled { background: #cbd5e1; cursor: not-allowed; }
+    .btn-green { background: #22c55e; }
+    .status-badge { padding: 15px; border-radius: 12px; font-size: 18px; font-weight: bold; margin: 15px 0; background: #e2e8f0; color: #475569; }
+    canvas { max-width: 100%; margin-top: 15px; }
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 1000; }
+    .modal-content { background: white; margin: 10% auto; padding: 20px; border-radius: 12px; max-width: 90%; max-height: 80%; overflow-y: auto; text-align: left; }
+    textarea { width: 100%; height: 180px; font-family: monospace; font-size: 12px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+
+  <div class="card">
+    <h1>SATA - Nivel de Agua</h1>
+    <p>Sistema Multi-usuario IoT (Bluetooth + Cloud)</p>
+    
+    <button id="btnConnect" class="btn" onclick="conectarBluetooth()">Conectar Bluetooth (Gateway)</button>
+    <button id="btnExport" class="btn" onclick="abrirModalCSV()" disabled>Exportar CSV</button>
+
+    <div class="status-badge" id="lblEstado">Estado: Esperando datos de la nube...</div>
+
+    <canvas id="graficoNivel"></canvas>
+  </div>
+
+  <div id="modalCSV" class="modal">
+    <div class="modal-content">
+      <h3 style="margin-top:0;">Registro de Datos (CSV)</h3>
+      <textarea id="txtCSV" readonly></textarea>
+      <button class="btn btn-green" onclick="copiarCSV()">Copiar al Portapapeles</button>
+      <button class="btn" style="background:#64748b;" onclick="cerrarModalCSV()">Cerrar</button>
+    </div>
+  </div>
+
 </body>
 </html>
