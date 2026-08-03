@@ -130,7 +130,8 @@
         for (let linea of lineas) {
           linea = linea.trim();
           if (linea.startsWith("SATA|")) {
-            let hora = new Date().toLocaleTimeString();
+            let hora = new Date().toLocaleTimeString('es-ES', { hour12: false });
+//         let hora = new Date().toLocaleTimeString();
             let partes = linea.split('|');
             let nivel = parseInt(partes[1]);
             let nombre = partes[2] || "SIN NIVEL";
