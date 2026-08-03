@@ -128,14 +128,14 @@
         for (let linea of lineas) {
           linea = linea.trim();
           if (linea.startsWith("SATA|")) {
-            // FORMATO FECHA Y HORA: DD-MM-YYYY HH:mm:ss (24hs)
+            // Generar Fecha DD-MM-YYYY
             let ahora = new Date();
             let dia = String(ahora.getDate()).padStart(2, '0');
             let mes = String(ahora.getMonth() + 1).padStart(2, '0');
             let anio = ahora.getFullYear();
             let horaActual = ahora.toLocaleTimeString('es-ES', { hour12: false });
-            
-            let fechaHora = `${dia}-${mes}-${anio} ${horaActual}`;
+
+            let fechaCompleta = `${dia}-${mes}-${anio} ${horaActual}`;
 
             let partes = linea.split('|');
             let nivel = parseInt(partes[1]);
@@ -147,7 +147,7 @@
 
             // Agregar evento al historial en Firebase
             historialRef.push({
-              hora: fechaHora,
+              hora: fechaCompleta,
               nivel: nivel,
               nombre: nombre,
               porcentaje: pct
@@ -176,10 +176,18 @@
         chart.data.datasets[0].data = [];
 
         Object.values(data).forEach(item => {
+          // 1. Guardar la fecha y hora completa en el CSV
           listaRegistros.push([item.hora, item.nivel, item.nombre, item.porcentaje]);
           
-          chart.data.labels.push(item.hora);
-          chart.data.datasets[0].data.push(parseInt(item.porcentaje));
+          // 2. Extraer solo la hora para la etiqueta del gráfico (evita romper el diseño)
+          let etiquetaHora = item.hora.includes(" ") ? item.hora.split(" ")[1] : item.hora;
+
+          // 3. Convertir a número limpio para Chart.js
+          let valorPorcentaje = parseInt(item.porcentaje);
+
+          chart.data.labels.push(etiquetaHora);
+          chart.data.datasets[0].data.push(valorPorcentaje);
+
           if (chart.data.labels.length > 15) {
             chart.data.labels.shift();
             chart.data.datasets[0].data.shift();
