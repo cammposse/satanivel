@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SATA - Sistema de Alerta Temprana</title>
   
-  <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- Firebase SDKs Compat -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
@@ -130,8 +128,15 @@
         for (let linea of lineas) {
           linea = linea.trim();
           if (linea.startsWith("SATA|")) {
-            let hora = new Date().toLocaleTimeString('es-ES', { hour12: false });
-//         let hora = new Date().toLocaleTimeString();
+            // FORMATO FECHA Y HORA: DD-MM-YYYY HH:mm:ss (24hs)
+            let ahora = new Date();
+            let dia = String(ahora.getDate()).padStart(2, '0');
+            let mes = String(ahora.getMonth() + 1).padStart(2, '0');
+            let anio = ahora.getFullYear();
+            let horaActual = ahora.toLocaleTimeString('es-ES', { hour12: false });
+            
+            let fechaHora = `${dia}-${mes}-${anio} ${horaActual}`;
+
             let partes = linea.split('|');
             let nivel = parseInt(partes[1]);
             let nombre = partes[2] || "SIN NIVEL";
@@ -142,7 +147,7 @@
 
             // Agregar evento al historial en Firebase
             historialRef.push({
-              hora: hora,
+              hora: fechaHora,
               nivel: nivel,
               nombre: nombre,
               porcentaje: pct
