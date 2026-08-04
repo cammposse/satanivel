@@ -71,7 +71,7 @@
     let bluetoothDevice;
     let bluetoothCharacteristic;
     let bufferTexto = "";
-    let listaRegistros = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
+    let listaRegistros = [["Fecha_Hora", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
 
     // Chart.js
     const ctx = document.getElementById('graficoNivel').getContext('2d');
@@ -91,7 +91,7 @@
       options: { scales: { y: { min: 0, max: 100, ticks: { stepSize: 25 } } } }
     });
 
-    // Función auxiliar para obtener Fecha y Hora en formato DD-MM-YYYY HH:mm:ss
+    // Función auxiliar para obtener Fecha y Hora actual (DD-MM-YYYY HH:mm:ss)
     function obtenerFechaHoraActual() {
       const ahora = new Date();
       const dia = String(ahora.getDate()).padStart(2, '0');
@@ -141,7 +141,7 @@
         for (let linea of lineas) {
           linea = linea.trim();
           if (linea.startsWith("SATA|")) {
-            let fechaHora = obtenerFechaHoraActual();
+            let fechaHoraCompleta = obtenerFechaHoraActual();
             let partes = linea.split('|');
             let nivel = parseInt(partes[1]);
             let nombre = partes[2] || "SIN NIVEL";
@@ -150,9 +150,10 @@
             // Guardar estado actual
             estadoRef.set({ trama: linea, timestamp: Date.now() });
 
-            // Agregar evento al historial en Firebase con fecha y hora completa
+            // Agregar evento al historial en Firebase guardando en 'fechaHora' y 'hora'
             historialRef.push({
-              hora: fechaHora,
+              fechaHora: fechaHoraCompleta,
+              hora: fechaHoraCompleta,
               nivel: nivel,
               nombre: nombre,
               porcentaje: pct
@@ -176,19 +177,28 @@
     historialRef.on('value', (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        listaRegistros = [["Timestamp", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
+        listaRegistros = [["Fecha_Hora", "Nivel_Codigo", "Estado_Nombre", "Porcentaje_Equivalente"]];
         chart.data.labels = [];
         chart.data.datasets[0].data = [];
 
         Object.values(data).forEach(item => {
-          let tiempoReg = item.hora || "";
-          
-          // Guardar registro completo con Fecha y Hora en la tabla CSV
-          listaRegistros.push([tiempoReg, item.nivel, item.nombre, item.porcentaje]);
-          
-          // Mostrar sólo la hora (HH:mm:ss) en el eje X de la gráfica para no saturar la vista
-          let soloHora = tiempoReg.includes(" ") ? tiempoReg.split(" ")[1] : tiempoReg;
-          
+          let tiempoCadena = item.fechaHora || item.hora || "";
+
+          // Si el registro de Firebase no tiene la fecha DD-MM-YYYY (ej. es un dato viejo), se la agregamos en vivo
+          if (!tiempoCadena.includes("-")) {
+            const hoy = new Date();
+            const dia = String(hoy.getDate()).padStart(2, '0');
+            const mes = String(hoy.getMonth() + 1).padStart(2, '0');
+            const anio = hoy.getFullYear();
+            tiempoCadena = `${dia}-${mes}-${anio} ${tiempoCadena}`.trim();
+          }
+
+          // Guardar en el CSV con Fecha y Hora
+          listaRegistros.push([tiempoCadena, item.nivel, item.nombre, item.porcentaje]);
+
+          // Extraer sólo HH:mm:ss para el eje X de la gráfica
+          let soloHora = tiempoCadena.includes(" ") ? tiempoCadena.split(" ")[1] : tiempoCadena;
+
           chart.data.labels.push(soloHora);
           chart.data.datasets[0].data.push(parseInt(item.porcentaje));
 
